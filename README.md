@@ -8,6 +8,26 @@ See paper: https://www.sciencedirect.com/science/article/pii/S0092867418310353
 
 ## Requirements 
 
+The vignettes are implemented in R and makes use of various CRAN and Bioconductor packages. 
+It also depends on the disorder prediction tool IUPred. 
+
+### slimR package 
+
+> install.packages('devtools')
+> devtools::install_github('BIMSBbioinfo/slimR')
+
+### CRAN packages 
+
+> install.packages(c('BiocManager', 'rmarkdown', 'knitr', 'data.table', 'ggplot2', 'ggrepel', 'pbapply', 'stringi'))
+
+### Bioconductor packages 
+
+> BiocManager::install(c('Biostrings', 'biomaRt', 'rtracklayer', 'GenomicRanges'))
+
+### IUPred Disorder Predictor
+
+IUPred source code can be dowloaded from here: http://iupred.enzim.hu/Downloads.php .
+After unpacking the source code, cd to the src directory. Compile the code with "cc iupred.c -o iupred"
 
 ## Vignettes:
 
