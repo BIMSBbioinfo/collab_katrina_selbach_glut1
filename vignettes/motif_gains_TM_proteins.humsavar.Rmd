@@ -6,9 +6,9 @@ output:
     style: spacelab
     toc: yes
     toc_float: yes
-  params:
-    workdir: '.'
-    datadir: './data'
+params:
+  workdir: '.'
+  datadir: './data'
 date: "`r date()`"
 ---
 
@@ -18,6 +18,9 @@ datadir <- params$datadir
 
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 knitr::opts_knit$set(root.dir = workdir)
+```
+
+```{r dependencies}
 library(slimR)
 library(rtracklayer)
 library(Biostrings)
@@ -28,8 +31,8 @@ library(parallel)
 library(biomaRt)
 library(ggrepel)
 library(pbapply)
+library(GenomicRanges)
 ```
-
 
 # Introduction
 
@@ -236,13 +239,15 @@ compareMotifChangesByVariantType <- function(vars, motifChanges, changeType = 'g
   
   t <- table(vars$variant_type)
   
-  ds$DiseaseBG <- t[['Disease']]
-  ds$PolymorphismBG <- t[['Polymorphism']]
+  ds$DiseaseFail <- t[['Disease']] - ds$Disease
+  ds$PolymorphismFail  <- t[['Polymorphism']] - ds$Polymorphism
   
   ds <- cbind(ds, do.call(rbind, apply(ds[,2:5], 1, function(x) {
-    p <- fisher.test(matrix(x, nrow = 2))$p.val
-    fc <- (x[1]+1)/(x[3]+1) * (x[4]+1)/(x[2]+1)
-    return(data.frame('pval' = p, 'foldChange' = fc))
+    
+    test <- fisher.test(matrix(c(x[1], x[3], x[2], x[4]), nrow = 2), alternative = 'two.sided')
+    p <- test$p.value
+    or <- as.numeric(test$estimate)
+    return(data.frame('pval' = p, 'oddsRatio' = or))
   })))
   
   return(ds)
@@ -290,10 +295,10 @@ df <- do.call(rbind, lapply(names(l), function(r) {
 }))
 
 ggplot2::ggplot(data = df,
-                  aes(x = region, y = log2(foldChange))) +
+                  aes(x = region, y = log2(oddsRatio))) +
     geom_bar(aes(fill = ifelse(pval < 0.05, 'red', 'black')), position = 'dodge', stat = 'identity') +
   geom_text(aes(label = paste('p =',round(pval, 3)), 
-                y = log2(foldChange)/2), 
+                y = log2(oddsRatio)/2), 
             color = 'white', size = 6) + 
   scale_fill_identity()
     
@@ -305,7 +310,7 @@ ggplot2::ggplot(data = df,
 #cytoplasmic regions of transmembrane proteins
 vars = variants[getVariantsByRegion(variants, ctm),]
 dt <- compareMotifChangesByVariantType(vars = vars, motifChanges = motifChanges, changeType = 'gained')
-ggplot(dt, aes(x = log2(foldChange), y = -log10(pval))) + 
+ggplot(dt, aes(x = log2(oddsRatio), y = -log10(pval))) + 
   geom_point(aes(color = ifelse(pval < 0.05, 'red', 'black')), size = 5, alpha = 0.4) + 
   geom_label_repel(aes(label = ifelse(pval < 0.05, SLiM, ''))) + 
   scale_color_identity()
