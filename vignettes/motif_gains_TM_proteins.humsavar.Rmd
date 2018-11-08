@@ -316,3 +316,7 @@ ggplot(dt, aes(x = log2(oddsRatio), y = -log10(pval))) +
   scale_color_identity()
 ```
 
+# Session Information
+```{r}
+print(sessionInfo())
+```
