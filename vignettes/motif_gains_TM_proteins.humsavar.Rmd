@@ -2,15 +2,20 @@
 title: "Analyse Motif Gains at Disordered Cytosolic Tails of Transmembrane Proteins using Humsavar variants"
 output:
   html_document:
-    code_folding: hide
+    code_folding: show
     style: spacelab
     toc: yes
     toc_float: yes
+  params:
+    workdir: '.'
+    datadir: './data'
 date: "`r date()`"
 ---
 
 ```{r setup, echo = FALSE, message=FALSE, warning=FALSE}
-workdir <- '/data/local/buyar/collaborations/katrina/analysis_motif_gains_TM_proteins'
+workdir <- params$workdir
+datadir <- params$datadir
+
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 knitr::opts_knit$set(root.dir = workdir)
 library(slimR)
@@ -22,6 +27,7 @@ library(stringi)
 library(parallel)
 library(biomaRt)
 library(ggrepel)
+library(pbapply)
 ```
 
 
@@ -38,47 +44,86 @@ We make use of the slimR package along with other R/Bioconductor packages to sho
 transmembrane proteins for gains/losses of short linear motifs. Moreover, this code shows the results that were obtained and published in the paper: https://www.sciencedirect.com/science/article/pii/S0092867418310353
 
 # Prepare datasets
-```{r getData}
+
+## Downloading human protein sequences from Uniprot
+
+How to download the latest protein sequence annotations from Uniprot:
+```
 # download uniprot fasta and import  
-fastaFile <- file.path(workdir, slimR::getUniprotData(format = 'fasta'))
+fastaFile <- slimR::getUniprotData(outDir = datadir, format = 'fasta', update = TRUE)
 fasta <- Biostrings::readAAStringSet(fastaFile)
-#save additional info as metadata
-l <- as.list(names(fasta))
-names(l) <- sub("^sp\\|(.+?)\\|.*", "\\1", names(fasta))
-metadata(fasta) <- l
 #process fasta headers to keep only uniprot accessions
-names(fasta) <- names(l)
+names(fasta) <- sub("^sp\\|(.+?)\\|.*", "\\1", names(fasta))
+```
 
-# download uniprot gff annotations and import
-gffFile <- file.path(workdir, slimR::getUniprotData(format = 'gff'))
+We will import already downloaded fasta sequences: 
+```{r}
+fasta <- Biostrings::readAAStringSet(file.path(datadir, 'uniprot.9606.Nov_8_2018.fasta.gz'))
+#process fasta headers to keep only uniprot accessions
+names(fasta) <- sub("^sp\\|(.+?)\\|.*", "\\1", names(fasta))
+```
+
+## Downloading human protein sequence features from Uniprot in GFF format
+
+In order to download the latest protein sequence features: 
+```
+gffFile <- slimR::getUniprotData(outDir = datadir, format = 'gff', update = TRUE)
 gff <- rtracklayer::import.gff(gffFile)
+```
 
-#download slim regular expression and add an extra motif (diLeu motif)
+We will import already processed GFF data:
+```{r}
+gff <- readRDS(file.path(datadir, 'uniprot.9606.Nov_8_2018.gff.RDS'))
+```
+
+
+## Download Short Linear Motif regular expressions
+
+In order to downlaod the latest Short Linear Motif (SLiM) expressions from the ELM database (http://elm.eu.org):
+
+```
 slim_regex <- slimR::getElmClasses()
-slim_regex <- c(slim_regex, list('LIG_diLeu_1' = '.LL.'))
+```
 
-# run iupred to get disorder predictions 
+It is also possible to add more custom SLiM definitions like this: 
+```
+slim_regex <- c(slim_regex, list('LIG_diLeu_1' = '.LL.'))
+```
+
+Instead, we'll use already downloaded SLiM expressions back in April, 2017, which also contains a diLeucine motif. 
+```{r}
+slim_regex <- readRDS(file.path(datadir, 'elm_classes.RDS'))
+```
+
+
+## Running IUPred  
+
+slimR package contains a wrapper function that accepts a fasta format file and 
+runs the IUPred tool to get per-residue disorder propensity scores. 
+See ?slimR::runIUpred for more information on how to download and install IUPred tool.
+
+```
 iupred <- slimR::runIUPred(iupredPath = '/home/buyar/tools/iupred', 
-                           fastaFile = fastaFile, 
+                           fastaFile = '../data/uniprot.9606.Nov_8_2018.fasta.gz', 
                            nodeN = 10)
 #process to keep only uniprot accessions
 names(iupred) <- sub("^sp\\|(.+?)\\|.*", "\\1", names(iupred))
+```
 
-#download single amino acid variants 
-humsavar <- slimR::getHumSavar()
+Again, we import an already pre-processed iupred score object that was run on the previously imported fasta file.
+```{r}
+iupred <- readRDS(file.path(datadir, 'uniprot.9606.Nov_8_2018.iupred.RDS'))
+```
 
-#add disorder score field to each variant
-humsavar$iupredScore <- pbapply::pbapply(as.data.table(humsavar), 1, function(x) {
-  uni <- x[['seqnames']]
-  pos <- as.numeric(x[['start']])
-  score <- iupred[[uni]][pos]
-  return(score)
-})
+## Downloading single amino acid variants 
 
-#find out if variants overlap any known domains 
-humsavar$overlapsDomain <- FALSE
-humsavar[unique(queryHits(findOverlaps(humsavar, gff[gff$type == 'Domain',]))),]$overlapsDomain <- TRUE
+The human single amino-acid variants compilation can be downloaded from 
+www.uniprot.org/docs/humsavar.txt using `slimR::getHumSavar` function. 
 
+Here we import an already downloaded version of humsavar compilation. 
+
+```{r}
+humsavar <- slimR::getHumSavar(outdir = datadir)
 ```
 
 # Find motif gains/losses due to humsavar variants
@@ -95,13 +140,31 @@ a list of regular expressions each representing a different class
 of short linear motifs. 
 
 We also need to look for motif gains/losses in disordered regions of the proteome. Also, we should avoid 
-regions of the proteome which are known to harbour protein domains. Point mutations in such ordered regions are most likely disruptive due to their effects on the protein structure, rather than the effect on protein-protein interactions mediated by short linear motifs. 
+regions of the proteome which are known to harbour protein domains. Point mutations in such ordered regions are most likely disruptive due to their effects on the protein structure, rather than the effect on protein-protein interactions mediated by short linear motifs. So, here we add information about the disorder propensity of each 
+residue at the variant site and whether the variant overlaps any known protein domain annotations.
+
+```{r}
+#add disorder score field to each variant
+humsavar$iupredScore <- pbapply::pbapply(as.data.table(humsavar), 1, function(x) {
+  uni <- x[['seqnames']]
+  pos <- as.numeric(x[['start']])
+  score <- iupred[[uni]][pos]
+  return(score)
+})
+
+#find out if variants overlap any known domains 
+humsavar$overlapsDomain <- FALSE
+humsavar[unique(queryHits(findOverlaps(humsavar, gff[gff$type == 'Domain',]))),]$overlapsDomain <- TRUE
+```
+
+Let's subset the variants by removing 'Unclassified' variants, variants with disorder score less than or equal to 0.4
+and those variants that overlap protein domains. 
 
 ```{r}
 #Get humsavar variants in disordered regions and not overlapping
 #any protein domains (as annotated in uniprot),
 #remove variants that are 'Unclassified'. 
-variants <- as.data.table(humsavar[humsavar$iupredScore >= 0.4 & 
+variants <- as.data.table(humsavar[humsavar$iupredScore > 0.4 & 
                        humsavar$overlapsDomain == FALSE & 
                        humsavar$variant %in% c('Disease', 'Polymorphism'),])
 ```
@@ -133,8 +196,6 @@ motifChanges <- slimR::findMotifChangesMulti(
   sequences = fasta[names(fasta) %in% unique(variants$uniprotAccession)], 
   variants = variants, 
   nodeN = 10)
-
-motifChanges$names <- metadata(fasta)[motifChanges$uniprotAccession]
 ```
 
 Let's make some summary plots for the consequences of the screened variants 
@@ -157,7 +218,11 @@ getVariantsByRegion <- function(variants, regions) {
                                        )
   return(unique(queryHits(findOverlaps(variants, regions))))
 }
+```
 
+Define another function to calculate enrichment of disease-causing variants with respect to 
+polymorphisms in terms of gain/loss of specific types of SLiM classes. 
+```{r}
 compareMotifChangesByVariantType <- function(vars, motifChanges, changeType = 'gained') {
 
   s <- motifChanges[variantID %in% vars$variantID & 
@@ -186,6 +251,7 @@ compareMotifChangesByVariantType <- function(vars, motifChanges, changeType = 'g
 ```
 
 
+Define the extracellular and cytoplasmic regions of trans-membrane proteins. 
 ```{r}
 gff.dt <- as.data.table(gff)
 #cytosolic regions of transmembrane proteins
@@ -198,6 +264,7 @@ tmProteins <- union(as.character(seqnames(ctm)), as.character(seqnames(etm)))
 
 
 ## Reproduce Figure 7B
+
 ```{r}
 mc <- motifChanges[SLiM == 'LIG_diLeu_1']
 
