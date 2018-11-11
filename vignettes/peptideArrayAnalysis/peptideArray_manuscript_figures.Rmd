@@ -1,0 +1,360 @@
+
+TODO: figure out GO term stuff (why don't I find the same go terms for the clathrin subgraph when run in parallel and when run interactively for the five genes (CLTA, CLTB, CLTC, CLINT1, DECR1))
+Try to switch to gprofiler if it makes sense. 
+TODO: write an R script to run 
+1) preprocess_peptideArray_table.R 
+2) findSLiMDomainPairs.R 
+3) ./vignettes/peptideArrayh_manuscript_figures.Rmd
+
+---
+title: "findSLiMDomainPairs"
+output:
+  html_document:
+    code_folding: hide
+    depth: 2
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 12, fig.height = 10, eval = TRUE)
+#knitr::opts_knit$set(root.dir = '/data/akalin/buyar/collaborations/selbach/arrayResultsAnalysis/NeuroarrayResults_20170509/')
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+```{r input_processing, eval = TRUE}
+library(data.table)
+library(DT)
+library(Biostrings)
+library(ggplot2)
+library(pheatmap)
+library(parallel)
+library(ggsignif)
+library(igraph)
+library(cowplot)
+library(ggnetwork)
+library(intergraph)
+
+datadir <- '/data/local/buyar/collaborations/katrina/collab_katrina_selbach_glut1/data'
+
+#1. read peptide array interaction data
+arrayData <- fread(file.path(datadir, '20170522_Neuroarray_results.preprocessed.tsv'))
+arrayData$Genename.prey <- gsub(';.*$', '', arrayData$Genename.prey)
+
+#get slim domain interactions (output of findSLiMDomainPairs.R)
+slimDomainInteractions <- readRDS(file.path(datadir, 'peptideArray_slimDomainInteractions.RDS'))
+slimDomainInteractions$PeptideIDext <- arrayData[match(slimDomainInteractions$interactionID, arrayData$interactionID)]$PeptideIDext
+```
+
+`r date()`
+
+# Proteins targeting multiple peptides
+
+We'd like to summarize for each protein the list of peptides with significant interactions with significant SILAC values
+
+```{r}
+#subset arrayData for significant interactions
+
+mdata <- arrayData[!is.na(`Median.SILAC.ratio.Wt/Mut`)]
+
+mdata <- rbind(arrayData[genotype == 'wt' & LFQ_strict == '+' & 
+                           `Median.SILAC.ratio.Wt/Mut` > 1 & 
+                           `Minimum.SILAC.ratio.Wt/Mut` > 0], 
+               arrayData[genotype == 'mut' & LFQ_strict == '+' & 
+                           `Median.SILAC.ratio.Wt/Mut` < -1  & 
+                           `Maximum.SILAC.ratio.Wt/Mut` < 0])
+
+#split mdata by prey gene name
+ldata <- lapply(split(mdata, mdata$Genename.prey), function(x) unique(x$PeptideIDext))
+ldata <- ldata[names(sort(sapply(ldata, length), decreasing = T))]
+
+dt <- data.table::data.table(do.call(rbind, lapply(names(ldata), 
+                      function(x) {
+                        data.frame('geneName' = x,
+                                   'peptides' = paste0(ldata[[x]], collapse = ', '),
+                                   'peptideCount' = length(ldata[[x]]),
+                                   stringsAsFactors = F)
+                         })))
+
+DT::datatable(data = dt,
+          extensions = c('Buttons', 'FixedColumns'),
+          options = list(fixedColumns = TRUE,
+                         scrollX = TRUE,
+                         dom = 'Bfrtipl',
+                         buttons = c('copy', 'print', 'csv','excel', 'pdf')),
+          filter = 'bottom')
+```
+
+
+# How specific are the pull-downs? 
+
+We'd like to find out how specific are the interactions detected from the array.
+Are the interactions that we call significant, enriched for relevant protein
+domains that can bind slims whose patterns match the peptides?
+
+## Does gain/loss of slim-domain interactions correlate with the changes in the silac ratios? 
+
+Assuming that the availability of a SLiM in a peptide and a compatible PFAM
+domain in its interaction partner provides us evidence of the accuracy of the
+detected interaction, then we should observe an impact in the binding strength
+between the peptide and its partner when the SLiMs are broken by the mutations,
+or novel slims are gained via mutations.
+
+In the following analysis, I look for interactions of peptides in which a
+SLiM-domain pair is broken (lost interaction for the mutant peptide) and
+interactions that have created a SLiM-domain pair (gained interaction for the
+mutant peptide) and check if the SILAC ratios (wt versus mutant) have
+decreased/increased in significant interactions and compare it with the
+background distribution of SILAC ratios.
+
+SILAC values are plotted for:
+
+- all-interactions: all detected interactions for WT/mutant peptides
+
+- slim-domain-paired: interactions in which the peptide has a SLiM and the
+interaction partner has a compatible PFAM domain
+
+- slim-domain-pair_GAINED: interactions in which the mutant peptide has gained a
+SLiM (via point mutation) and the interaction partner contains a compatible PFAM
+domain
+
+- slim-domain-pair_LOST: interactions in which the mutant peptide has lost a
+SLiM (via point mutation) and the interaction partner contains a compatible PFAM
+domain
+
+
+```{r}
+all <- arrayData[!is.na(`Median.SILAC.ratio.Wt/Mut`)] #all interactions
+all$category <- 'All interactions'
+
+gained <- arrayData[genotype == 'mut' & !is.na(`Median.SILAC.ratio.Wt/Mut`) & interactionID %in% slimDomainInteractions[gainedTargets != '']$interactionID]
+
+gainedN <- gained[LFQ_loose == '-']
+gainedN$category <- 'Gained interactions: LFQ negative'
+
+gainedP <- gained[LFQ_loose == '+']
+gainedP$category <- 'Gained interactions: LFQ positive'
+
+
+lost <- arrayData[genotype == 'wt' & !is.na(`Median.SILAC.ratio.Wt/Mut`) & interactionID %in% slimDomainInteractions[lostTargets != '']$interactionID]
+
+lostN <- lost[LFQ_loose == '-']
+lostN$category <- 'Lost interactions: LFQ negative'
+
+lostP <- lost[LFQ_loose == '+']
+lostP$category <- 'Lost interactions: LFQ positive'
+
+mdata <- rbind(all, gainedN, gainedP, lostN, lostP)
+counts <- mdata[,length(PeptideID), by = c('category')]
+
+ggplot(data = mdata, aes(x = category, LFQ_loose, y = `Median.SILAC.ratio.Wt/Mut`)) + 
+  theme_bw(base_size = 16) +
+  geom_violin(aes(fill = category)) + 
+    geom_signif(comparisons = list(
+            c('Gained interactions: LFQ negative', 'All interactions'),
+            c('Gained interactions: LFQ positive', 'All interactions'),
+            c('Lost interactions: LFQ negative', 'All interactions'),
+            c('Lost interactions: LFQ positive', 'All interactions')),
+      map_signif_level = FALSE, y_position = c(8:11)) + 
+    geom_text(data = counts, aes(x = category, y = -8, label = paste0("N: ",V1))) +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Gained/Lost SLiM-domain interactions 
+
+## SLiM-domain interactions lost in the mutant
+```{r gained-lost_slimdomain_interacitons}
+
+slimDomainInteractions$`Median.SILAC.ratio.Wt/Mut` <- arrayData[match(slimDomainInteractions$interactionID, arrayData$interactionID)]$`Median.SILAC.ratio.Wt/Mut`
+slimDomainInteractions$LFQ_loose <- arrayData[match(slimDomainInteractions$interactionID, arrayData$interactionID)]$LFQ_loose
+slimDomainInteractions$genotype <- arrayData[match(slimDomainInteractions$interactionID, arrayData$interactionID)]$genotype
+slimDomainInteractions$LFQ_strict <- arrayData[match(slimDomainInteractions$interactionID, arrayData$interactionID)]$LFQ_strict
+
+
+lostInteractions <- slimDomainInteractions[lostTargets != '' & LFQ_loose == '+' & !is.na(`Median.SILAC.ratio.Wt/Mut`) & genotype == 'wt'] 
+
+lostInteractions <- subset(lostInteractions, select = c('PeptideID', 'domainName', 'domainTargetsInPeptideWT', 'domainTargetsInPeptideMUT', 'interactor', 'Median.SILAC.ratio.Wt/Mut'))
+
+DT::datatable(data = lostInteractions,
+          extensions = c('Buttons', 'FixedColumns'),
+          options = list(fixedColumns = TRUE,
+                         scrollX = TRUE,
+                         dom = 'Bfrtipl',
+                         buttons = c('copy', 'print', 'csv','excel', 'pdf')),
+          filter = 'bottom'
+          )
+```
+
+## SLiM-Domain interactions gained in the mutant
+
+```{r}
+gainedInteractions <- slimDomainInteractions[gainedTargets != '' & LFQ_loose == '+' & !is.na(`Median.SILAC.ratio.Wt/Mut`) & genotype == 'mut'] 
+
+gainedInteractions <- subset(gainedInteractions, select = c('PeptideID', 'domainName', 'domainTargetsInPeptideWT', 'domainTargetsInPeptideMUT', 'interactor', 'Median.SILAC.ratio.Wt/Mut'))
+
+DT::datatable(data = gainedInteractions,
+          extensions = c('Buttons', 'FixedColumns'),
+          options = list(fixedColumns = TRUE,
+                         scrollX = TRUE,
+                         dom = 'Bfrtipl',
+                         buttons = c('copy', 'print', 'csv','excel', 'pdf')),
+          filter = 'bottom'
+          )
+```
+
+# Clustering the peptide-protein network
+
+Here, I generate a network of peptide-protein interactions using LFQ_strict cut-off and SILAC thresholds. 
+Then, I split the network into communities using the igraph package and find the communities with at least two peptides. 
+Then, I look for common matches of SLiMs in these clustered peptides and for each cluster I print the top 3 SLiMs sorted by number of peptides that they match. 
+
+```{r clusterNetwork, eval = TRUE}
+#' @param uniprotAccessions A vector of uniprot accessions to convert to Ensembl gene, protein, or transcript ids
+#' @param taxId Taxonomy ID of the species for doing the conversion
+getUniprot2Ensembl <- function(taxId = 9606) {
+  #up <- UniProt.ws::UniProt.ws(taxId = taxId)
+  entrez2uniprot <- org.Hs.eg.db::org.Hs.egUNIPROT
+  entrez2uniprot <- as.list(entrez2uniprot[mappedkeys(entrez2uniprot)])
+  uniprot2entrez <- data.frame(do.call(rbind, lapply(names(entrez2uniprot), function(entrezID) {
+    do.call(rbind, lapply(entrez2uniprot[[entrezID]], function(unprotID) {
+      c(unprotID, entrezID)
+    }))
+  })), stringsAsFactors = F)
+  
+  entrez2ensembl <- org.Hs.eg.db::org.Hs.egENSEMBL
+  entrez2ensembl <- as.list(entrez2ensembl[mappedkeys(entrez2ensembl)])
+
+  uniprot2ensembl <- data.frame(do.call(rbind, apply(uniprot2entrez, 1, function(x) {
+    uni <- x[[1]]
+    ent <- x[[2]]
+    ensIDs <- entrez2ensembl[[ent]]
+    do.call(rbind, lapply(ensIDs, function(ens) {
+      c(uni, ent, ens)
+    }))
+  })), stringsAsFactors = F)
+  
+  colnames(uniprot2ensembl) <- c('uniprotAccession', 'entrezID', 'ensemblID')
+  return(uniprot2ensembl)
+} 
+
+runGOanalysis <- function(targetedGenes, backgroundGenes, species = 'human', writeToFile = NULL) {
+  goBP <- RCAS::runTopGO(ontology = 'BP', species = species, backgroundGenes = backgroundGenes, targetedGenes = targetedGenes)
+  goMF <- RCAS::runTopGO(ontology = 'MF', species = species, backgroundGenes = backgroundGenes, targetedGenes = targetedGenes)
+  goCC <- RCAS::runTopGO(ontology = 'CC', species = species, backgroundGenes = backgroundGenes, targetedGenes = targetedGenes)
+  goBP$ontology <- 'Biological_Process'
+  goMF$ontology <- 'Molecular_Function'
+  goCC$ontology <- 'Cellular_Compartment'
+
+  goAll <- rbind(goBP, goMF, goCC)
+  goAll <- goAll[goAll$bh < 0.1,]
+  #goAll <- goAll[order(goAll$foldEnrichment, decreasing = T),]
+
+  if(!is.null(writeToFile)) {
+    write.table(x = goAll, file = writeToFile, quote = F, sep = '\t', row.names = F)
+  }
+  return(goAll)
+}
+
+#get a mapping between all uniprot accessions to ensembl so that we can run runTopGO function of RCAS
+uni2ens <- getUniprot2Ensembl() #takes about 30 seconds to get all uniprot mappings to entrez and ensembl
+
+minMembers <- 1 
+
+mdata <- rbind(arrayData[genotype == 'wt' & LFQ_strict == '+' & 
+                           `Median.SILAC.ratio.Wt/Mut` > 1 & 
+                           `Minimum.SILAC.ratio.Wt/Mut` > 0], 
+               arrayData[genotype == 'mut' & LFQ_strict == '+' & 
+                           `Median.SILAC.ratio.Wt/Mut` < -1  & 
+                           `Maximum.SILAC.ratio.Wt/Mut` < 0])
+
+#exclude control peptides from network analysis
+mdata <- mdata[!grep('cntrl', mdata$PeptideID),]
+
+mdata <- subset(mdata, select = c('Genename.prey', 'PeptideIDwithGeneName', 'genotype', 'Median.SILAC.ratio.Wt/Mut', 'uniprotMatch', 'PeptideUniprotID'))
+colnames(mdata)[1:2] <- c('from', 'to')
+
+#create a network and get communities
+g <- graph_from_data_frame(d = mdata, directed = F)
+fc <- fastgreedy.community(as.undirected(g))
+#get community membership of each node into a data.frame
+memb <- data.frame(t(data.frame(as.list(membership(fc)))))
+colnames(memb) <- c('cluster')
+memb$nodes <- rownames(memb)
+
+t <- proc.time()
+cl <- parallel::makeCluster(12)
+parallel::clusterExport(cl = cl, varlist = c('memb', 'mdata', 'uni2ens', 'runGOanalysis'))
+goResults <- pbapply::pblapply(cl = cl, X = split(memb, memb$cluster), function(x) {
+  require(data.table)
+  require(topGO)
+  #remove peptides from vertices to only consider interaction partners of peptides
+  vertices <-  setdiff(x$nodes, mdata$to)
+  #look for go terms when there is at least two genes in the subgraph
+  if(length(vertices) > 1) {
+    ids <- unique(mdata[from %in% vertices]$uniprotMatch)
+        #map uniprot identifiers of proteins to ensembl ids
+    ensIDs <- unique(uni2ens[uni2ens$uniprotAccession %in% ids,]$ensemblID)
+      
+    runGOanalysis(targetedGenes = ensIDs, backgroundGenes = unique(uni2ens$ensemblID))
+  }
+})
+names(goResults) <- clusterIDs
+proc.time() -  t
+
+#for each subgraph plot the interaction network  
+subgraphs <- lapply(clusterIDs, function(clusterID) {
+#plot a subgraph of g based on membershipd data 
+cat("clusterID",clusterID,"\n")
+vertices <- memb[memb$cluster == clusterID,]$nodes
+if(length(vertices) > 2) {
+  d <- mdata[to %in% vertices]
+  gi <- graph_from_data_frame(d = d, 
+                              directed = F)
+  igraph::V(gi)$color <- ifelse(grepl('_', names(V(gi))), "peptide", "protein")
+  igraph::V(gi)$shape <- ifelse(grepl('_', names(V(gi))), "peptide", "protein")
+  igraph::E(gi)$color <- ifelse(d$genotype == 'wt', "wt-edge", "mutant-edge")
+  igraph::E(gi)$width <- abs(d$`Median.SILAC.ratio.Wt/Mut`)
+  gi <- add_layout_(gi, nicely())
+  
+  p <- ggplot(ggnetwork(gi), aes(x = x, y = y, xend = xend, yend = yend), show.legend = F) +
+      geom_edges(aes(color = color.y)) +
+      geom_nodes(aes(color = color.x, 
+                     shape = ifelse(shape == 'protein', 'circle', 'triangle')), 
+                 show.legend = F,
+                 size = 8) +
+      geom_nodelabel_repel(aes(color = color.x, label = vertex.names), 
+                           show.legend = F, size = 3,
+                           fontface = "bold") +
+      theme_blank(legend.position = 'bottom', 
+                  legend.box.margin = margin(0, 0, 0, 0), 
+                  legend.title = element_blank())
+  return(p)
+  }
+})
+names(subgraphs) <- clusterIDs
+
+# make plots for each sub graph 
+pdf("network_data.clustering_goterms.pdf")
+i <- 0
+for(clusterID in clusterIDs) {
+  if(!is.null(subgraphs[[clusterID]]) & !is.null(goResults[[clusterID]])) {
+    i <- i + 1
+    sg <- subgraphs[[clusterID]]
+    goData <- goResults[[clusterID]]
+    goData <- goData[order(goData$bh),]
+    goData$Term <- factor(goData$Term)
+    if(nrow(goData) > 10) { goData <- goData[1:10,] } 
+    go <- ggplot(data = goData, aes(x = Term, y = -log10(bh))) +
+      geom_bar(aes(fill = ontology, reorder(GO.ID, -bh)), stat = 'identity') + coord_flip() +
+      scale_x_discrete(labels = goData$Term[1:10]) + 
+      theme(legend.position = 'bottom', legend.direction = 'vertical', legend.title = element_blank())
+    print(cowplot::plot_grid(sg, go, nrow = 2) + draw_label(label = LETTERS[i],
+                                                      x = 0.05, y = 0.95))
+  }
+}
+dev.off()
+```
