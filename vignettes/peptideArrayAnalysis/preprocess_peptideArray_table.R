@@ -1,9 +1,12 @@
 library('data.table')
 library('parallel')
 
-datadir <- '/data/local/buyar/collaborations/katrina/collab_katrina_selbach_glut1/data'
+args = commandArgs(trailingOnly=TRUE)
+
+datadir <- args[1] #path to the `data` folder
 
 #get uniprot accessions and corresponding gene names from the fasta file of human uniprot sequences
+message('Importing fasta sequences')
 fasta <- Biostrings::readAAStringSet(file.path(datadir, 'uniprot.9606.Nov_8_2018.fasta.gz'))
 
 uniprot2geneName <- data.frame('uniprotAccession' = sub("^sp\\|(.+?)\\|.+$", "\\1", names(fasta)),
@@ -11,13 +14,15 @@ uniprot2geneName <- data.frame('uniprotAccession' = sub("^sp\\|(.+?)\\|.+$", "\\
                                stringsAsFactors = FALSE)
 
 #import peptide-array results table from Katrina
+message('Importing peptide array table')
 neuroarrayResultsFile <- file.path(datadir, '20170522_Neuroarray_results.tsv')
 dt <- fread(neuroarrayResultsFile)
 
 #reviewed uniprot accesssions
 uniReviewed <- uniprot2geneName$uniprotAccession
 
-#only keep review uniprot accessions
+#only keep reviewed uniprot accessions
+message("Removing entries without reviewed uniprot accesssions")
 cl <- parallel::makeCluster(10)
 clusterExport(cl = cl, varlist = c('dt', 'uniReviewed'))
 match <- do.call(c, parLapply(cl = cl, X = 1:nrow(dt),
@@ -52,12 +57,13 @@ dt$`Maximum.SILAC.ratio.Wt/Mut` <- dt$`Median.SILAC.ratio.Wt/Mut` * 2 - dt$`Mini
 #create peptide ids replacing uniprot ids with gene names
 dt$PeptideUniprotID <- gsub('_.*$', '', dt$PeptideID)
 dt$PeptideVariant <- gsub('^.*_', '', dt$PeptideID)
-dt$PeptideGeneName <- uni2gene[match(dt$PeptideUniprotID, uni2gene$UNIPROTKB),]$`ENTRY-NAME`
+dt$PeptideGeneName <- uniprot2geneName[match(dt$PeptideUniprotID, uniprot2geneName$uniprotAccession),]$geneName
 dt[is.na(PeptideGeneName)]$PeptideGeneName <- dt[is.na(PeptideGeneName)]$PeptideUniprotID
 dt$PeptideIDwithGeneName <- paste(dt$PeptideGeneName, dt$PeptideVariant, sep = '_')
 #remove ARHGAP36_cntrl_1 peptides from the analysis
 dt <- dt[PeptideID != 'ARHGAP36_cntrl_1']
 dt$interactionID <- c(1:nrow(dt))
 
+message("saving processed table to ",datadir)
 outFile <- gsub(x = neuroarrayResultsFile, pattern = '.tsv$', replacement = '.preprocessed.tsv')
 write.table(dt, file = outFile, quote = FALSE, sep = '\t', row.names = FALSE)
