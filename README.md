@@ -4,32 +4,35 @@ short linear motif mediated protein interactions based on the peptide array anal
 
 See paper: https://www.sciencedirect.com/science/article/pii/S0092867418310353
 
-# Requirements 
+# Vignettes:
 
-The vignettes are implemented in R and makes use of various CRAN and Bioconductor packages. 
-It also depends on the disorder prediction tool IUPred. 
+## motif_gains_transmembrane_proteins
 
-## slimR package 
+The Rmarkdown scripts in this folder can be run to reproduce figures 7B, 7C, S6B, and S6C from the paper. 
+
+### Requirements
+
+The vignettes are implemented in R and makes use of various CRAN and Bioconductor packages.
+It also depends on the disorder prediction tool IUPred.
+
+#### slimR package
 
 > install.packages('devtools')
 > devtools::install_github('BIMSBbioinfo/slimR')
 
-## CRAN packages 
+#### CRAN packages
 
 > install.packages(c('BiocManager', 'rmarkdown', 'knitr', 'data.table', 'ggplot2', 'ggrepel', 'pbapply', 'stringi'))
 
-## Bioconductor packages 
+#### Bioconductor packages
 
 > BiocManager::install(c('Biostrings', 'biomaRt', 'rtracklayer', 'GenomicRanges'))
 
-## IUPred Disorder Predictor
+#### IUPred Disorder Predictor
 
 IUPred source code can be dowloaded from here: http://iupred.enzim.hu/Downloads.php .
 After unpacking the source code, cd to the src directory. Compile the code with "cc iupred.c -o iupred"
 
-# Vignettes:
-
-## motif_gains_transmembrane_proteins
 
 ### motif_gains_TM_proteins.humsavar.Rmd
 
@@ -62,6 +65,7 @@ The required R packages can be installed via:
 
 > install.packages(c('cowplot', 'data.table', 'DT', 'ggplot2', 'ggnetwork', 'intergraph', 'ggsignif', 'rmarkdown', 'DT'))
 
+### Description
 The script `preprocess_peptideArray_table.R` preprocesses the peptide pull-down results table, 
 which is at `./data/20170522_Neuroarray_results.tsv`. 
 
