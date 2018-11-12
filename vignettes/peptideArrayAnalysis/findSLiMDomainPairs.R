@@ -1,8 +1,15 @@
 library(data.table)
+library(parallel)
 
-datadir <- '/data/local/buyar/collaborations/katrina/collab_katrina_selbach_glut1/data'
+args = commandArgs(trailingOnly=TRUE)
+
+#set progres bar options
+pbapply::pboptions(type = 'timer')
+
+datadir <- args[1] #path to the `data` folder
 
 #1. read peptide array interaction data
+message("importing processed peptide array table")
 arrayData <- fread(file.path(datadir, '20170522_Neuroarray_results.preprocessed.tsv'))
 
 #2. get a list of all uniprot accessions found as interaction partners of the peptides in the array data
@@ -13,11 +20,13 @@ uniprotAccessions <- unique(unlist(lapply(uniprotAccessions, function(x) {strspl
 # pfam domain predictions (based on scanning PFAM hmms) on human protein sequences can be downloaded from here:
 # 'ftp://ftp.ebi.ac.uk/pub/databases/Pfam//releases/Pfam30.0/proteomes/9606.tsv.gz'
 
+message("importing PFAM domains")
 uniprot2pfam <- as.data.table(slimR::getPFAM(organism = 9606, pfam_version = "Pfam30.0"))
 uniprot2pfam <- uniprot2pfam[uniprot2pfam$seqnames %in% uniprotAccessions,]
 uniprot2pfam <- unique(subset(uniprot2pfam, select = c('seqnames', 'pfam_acc', 'pfam_name', 'clan')))
 colnames(uniprot2pfam) <- c('uniprotAccession', 'PFAM', 'NAME', 'CLAN')
 
+message("importing ELM -> PFAM associations")
 #download pfam clan information
 pfamClans <- slimR::getPFAMClans()
 
@@ -111,6 +120,7 @@ associatePeptides2PfamDomains <- function(arrayData,
 #and find out which peptides have gained/lost slim-domain interactions
 #that can be explained by gained slims and existing cognate domains in the interaction partneres
 #of the mutant form of the peptides.
+message("Associating slims to PFAM domains")
 slimDomainInteractions <- associatePeptides2PfamDomains(arrayData = arrayData,
                                                         uniprot2pfam = uniprot2pfam,
                                                         elm2pfam = elm2pfam,
@@ -119,4 +129,5 @@ slimDomainInteractions$domainName <- uniprot2pfam[match(slimDomainInteractions$d
 slimDomainInteractions$clan <- uniprot2pfam[match(slimDomainInteractions$domain, uniprot2pfam$PFAM),]$CLAN
 slimDomainInteractions$clanName <- as.character(pfamClans[match(slimDomainInteractions$clan, pfamClans$Accession),]$ID)
 
+message("Saving peptideArray_slimDomainInteractions.RDS at ",datadir)
 saveRDS(object = slimDomainInteractions, file = file.path(datadir, 'peptideArray_slimDomainInteractions.RDS'))
