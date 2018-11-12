@@ -13,25 +13,23 @@ date: "`r date()`"
 ---
 
 ```{r setup, include=FALSE}
+workdir <- params$workdir
+datadir <- params$datadir
 knitr::opts_chunk$set(echo = TRUE, fig.width = 12, fig.height = 10, eval = TRUE)
-#knitr::opts_knit$set(root.dir = '/data/akalin/buyar/collaborations/selbach/arrayResultsAnalysis/NeuroarrayResults_20170509/')
+knitr::opts_knit$set(root.dir = workdir)
 knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 ```
 
 ```{r input_processing, eval = TRUE}
 library(data.table)
 library(DT)
-library(Biostrings)
 library(ggplot2)
-library(pheatmap)
 library(parallel)
 library(ggsignif)
 library(igraph)
 library(cowplot)
 library(ggnetwork)
 library(intergraph)
-
-datadir <- '/data/local/buyar/collaborations/katrina/collab_katrina_selbach_glut1/data'
 
 #1. read peptide array interaction data
 arrayData <- fread(file.path(datadir, '20170522_Neuroarray_results.preprocessed.tsv'))
@@ -257,36 +255,36 @@ goResults <- pbapply::pbsapply(simplify = FALSE, USE.NAMES = TRUE,
 })
 
 #for each subgraph plot the interaction network  
-subgraphs <- lapply(clusterIDs, function(clusterID) {
-#plot a subgraph of g based on membershipd data 
-cat("clusterID",clusterID,"\n")
-vertices <- memb[memb$cluster == clusterID,]$nodes
-if(length(vertices) > 2) {
-  d <- mdata[to %in% vertices]
-  gi <- graph_from_data_frame(d = d, 
-                              directed = F)
-  igraph::V(gi)$color <- ifelse(grepl('_', names(V(gi))), "peptide", "protein")
-  igraph::V(gi)$shape <- ifelse(grepl('_', names(V(gi))), "peptide", "protein")
-  igraph::E(gi)$color <- ifelse(d$genotype == 'wt', "wt-edge", "mutant-edge")
-  igraph::E(gi)$width <- abs(d$`Median.SILAC.ratio.Wt/Mut`)
-  gi <- add_layout_(gi, nicely())
-  
-  p <- ggplot(ggnetwork(gi), aes(x = x, y = y, xend = xend, yend = yend), show.legend = F) +
-      geom_edges(aes(color = color.y)) +
-      geom_nodes(aes(color = color.x, 
-                     shape = ifelse(shape == 'protein', 'circle', 'triangle')), 
-                 show.legend = F,
-                 size = 8) +
-      geom_nodelabel_repel(aes(color = color.x, label = vertex.names), 
-                           show.legend = F, size = 3,
-                           fontface = "bold") +
-      theme_blank(legend.position = 'bottom', 
-                  legend.box.margin = margin(0, 0, 0, 0), 
-                  legend.title = element_blank())
-  return(p)
-  }
+
+subgraphs <- sapply(simplify = FALSE, USE.NAMES = TRUE, 
+                    split(memb, memb$cluster), function(x) {
+  #plot a subgraph of g based on membershipd data 
+  vertices <- x$nodes
+  if(length(vertices) > 2) {
+    d <- mdata[to %in% vertices]
+    gi <- graph_from_data_frame(d = d, 
+                                directed = F)
+    igraph::V(gi)$color <- ifelse(grepl('_', names(V(gi))), "peptide", "protein")
+    igraph::V(gi)$shape <- ifelse(grepl('_', names(V(gi))), "peptide", "protein")
+    igraph::E(gi)$color <- ifelse(d$genotype == 'wt', "wt-edge", "mutant-edge")
+    igraph::E(gi)$width <- abs(d$`Median.SILAC.ratio.Wt/Mut`)
+    gi <- add_layout_(gi, nicely())
+    
+    p <- ggplot(ggnetwork(gi), aes(x = x, y = y, xend = xend, yend = yend), show.legend = F) +
+        geom_edges(aes(color = color.y)) +
+        geom_nodes(aes(color = color.x, 
+                       shape = ifelse(shape == 'protein', 'circle', 'triangle')), 
+                   show.legend = F,
+                   size = 8) +
+        geom_nodelabel_repel(aes(color = color.x, label = vertex.names), 
+                             show.legend = F, size = 3,
+                             fontface = "bold") +
+        theme_blank(legend.position = 'bottom', 
+                    legend.box.margin = margin(0, 0, 0, 0), 
+                    legend.title = element_blank())
+    return(p)
+    }
 })
-names(subgraphs) <- clusterIDs
 
 # make plots for each sub graph 
 pdf("network_data.clustering_goterms.pdf")
@@ -308,5 +306,11 @@ for(clusterID in names(goResults)) {
                                                       x = 0.05, y = 0.95))
   }
 }
-dev.off()
+invisible(dev.off())
+```
+
+
+# Session Information
+```{r}
+print(sessionInfo())
 ```
