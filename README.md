@@ -57,7 +57,7 @@ To render this vignette type:
 
 ## peptideArrayAnalysis
 
-The scripts in this folder reproduce the analysis of peptide array pull-down experiment analysis results. 
+The scripts in this folder reproduce the analysis of peptide array pull-down experiment analysis results, in particular Figure S2B and Data S1. 
 
 ### Required R packages
 
