@@ -63,6 +63,13 @@ The scripts in this folder reproduce the analysis of peptide array pull-down exp
 
 The required R packages can be installed via:
 
+slimR package from github:
+
+> install.packages('devtools') 
+> devtools::install_github('BIMSBbioinfo/slimR')
+
+packages from CRAN: 
+
 > install.packages(c('cowplot', 'data.table', 'DT', 'ggplot2', 'ggnetwork', 'intergraph', 'ggsignif', 'rmarkdown', 'DT'))
 
 ### Description
